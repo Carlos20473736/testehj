@@ -5,7 +5,7 @@
  * Todas as requisições do SDK da Monetag passam por aqui automaticamente
  */
 
-import { ProxyAgent, fetch as undiciFetch } from "undici";
+import { ProxyAgent, request } from "undici";
 import type { Express, Request, Response } from "express";
 import { raw } from "express";
 
@@ -98,16 +98,16 @@ export function registerProxyRoutes(app: Express) {
         }
       }
 
-      const response = await undiciFetch(targetUrl, {
+      const { statusCode, headers: respHeaders, body: respBody } = await request(targetUrl, {
         method: req.method as any,
         headers,
         body: body as any,
         dispatcher: proxyAgent,
-        redirect: "follow",
+        maxRedirections: 5,
       });
 
       // Copiar headers de resposta relevantes
-      const responseHeaders = [
+      const responseHeaderNames = [
         "content-type",
         "content-length",
         "cache-control",
@@ -117,8 +117,8 @@ export function registerProxyRoutes(app: Express) {
         "location",
       ];
 
-      for (const header of responseHeaders) {
-        const value = response.headers.get(header);
+      for (const header of responseHeaderNames) {
+        const value = respHeaders[header];
         if (value) {
           res.setHeader(header, value);
         }
@@ -130,8 +130,13 @@ export function registerProxyRoutes(app: Express) {
       res.setHeader("Access-Control-Allow-Headers", "*");
       res.setHeader("Access-Control-Allow-Credentials", "true");
 
-      const bodyBuffer = Buffer.from(await response.arrayBuffer());
-      res.status(response.status).send(bodyBuffer);
+      // Coletar body da resposta
+      const chunks: Buffer[] = [];
+      for await (const chunk of respBody) {
+        chunks.push(Buffer.from(chunk));
+      }
+      const bodyBuffer = Buffer.concat(chunks);
+      res.status(statusCode).send(bodyBuffer);
     } catch (error: any) {
       console.error(`[PROXY] Erro:`, error.message);
       res.status(502).send(`Proxy error: ${error.message}`);
